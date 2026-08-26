@@ -163,6 +163,36 @@ module.exports = {
     }
   },
 
+  // สิทธิ์ของผู้ใช้ที่ล็อกอินอยู่ ณ ปัจจุบัน
+  // Dashboard เก็บ permissions ไว้ใน localStorage ตั้งแต่ตอน login เท่านั้น
+  // ถ้าแอดมินเปลี่ยน role ให้ทีหลัง ฝั่งหน้าเว็บจะยังใช้ของเก่าจนกว่าจะ login ใหม่
+  // (และถ้า localStorage ไม่มีคีย์นี้ เมนูจะหายเกือบหมด) endpoint นี้ให้ดึงของสดมา sync ได้
+  get_me: async (req, res, next) => {
+    try {
+      const userId = Number(req.user?.user_id);
+      if (Number.isNaN(userId)) return next(createError(400, 'Invalid user id'));
+      const [user] = await db.select().from(users).where(eq(users._id, userId));
+      if (!user) return next(createError(404, 'User does not exist.'));
+
+      let role_name = null;
+      if (user.role_id) {
+        const [role] = await db.select().from(schema.roles).where(eq(schema.roles._id, user.role_id));
+        if (role) role_name = role.name;
+      }
+      res.send({
+        _id: user._id,
+        username: user.username,
+        position: user.position,
+        role_id: user.role_id,
+        role_name,
+        permissions: await getPermissions(user),
+      });
+    } catch (error) {
+      console.log(error.message);
+      next(error);
+    }
+  },
+
   delete_user: async (req, res, next) => {
     try {
       const id = Number(req.params.id);

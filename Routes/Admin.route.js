@@ -869,6 +869,20 @@ router.post('/register', authAdmin, UserController.user_register);
  *       403:
  *         description: ไม่มีสิทธิ์ ADMIN
  */
+/**
+ * @swagger
+ * /api/admin/me:
+ *   get:
+ *     summary: ข้อมูล + สิทธิ์ของผู้ใช้ที่ล็อกอินอยู่
+ *     description: ใช้ให้ Dashboard sync สิทธิ์ล่าสุด ไม่ต้องรอ login ใหม่
+ *     tags: [Admin - Users]
+ *     security:
+ *       - AccessToken: []
+ *     responses:
+ *       200: { description: ข้อมูลผู้ใช้ + permissions }
+ */
+router.get('/me', UserController.get_me);
+
 router.get('/user/all', authAdmin, UserController.get_all_user);
 
 /**
