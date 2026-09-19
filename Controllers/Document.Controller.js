@@ -1,7 +1,6 @@
-const { put, del, get } = require('@vercel/blob');
+const r2 = require('../lib/r2');
 const createError = require('http-errors');
 const crypto = require('crypto');
-const { Readable } = require('stream');
 const { eq, desc } = require('drizzle-orm');
 const { db, schema } = require('../database/db');
 
@@ -40,19 +39,16 @@ module.exports = {
 
       const ext = (req.file.originalname.split('.').pop() || 'bin').toLowerCase();
       // path สุ่ม 24 hex (~96-bit) เดาไม่ได้ + ไม่เปิดเผย URL ต่อ client (โหลดผ่าน BE เท่านั้น)
-      // NOTE: Blob store ปัจจุบันเป็น public — ถ้าต้องการ private จริง เปิด private access ที่ store setting แล้วเปลี่ยนเป็น access:'private'
+      // NOTE: bucket R2 เปิด public อยู่ ความลับจึงมาจาก path ที่เดาไม่ได้ + BE เป็นคนเช็คสิทธิ์
+      //       ถ้าต้องการ private จริง ให้ปิด Public Development URL แล้วใช้ presigned GET แทน
       const randomName = crypto.randomBytes(24).toString('hex');
-      const blob = await put(`Documents/${carId}/${randomName}.${ext}`, req.file.buffer, {
-        access: 'public',
-        contentType: req.file.mimetype,
-        addRandomSuffix: true,
-      });
+      const fileUrl = await r2.put(`Documents/${carId}/${randomName}.${ext}`, req.file.buffer, req.file.mimetype);
 
       const [row] = await db.insert(Documents).values({
         car_id: carId,
         doc_type: docType,
         file_name: req.file.originalname,
-        blob_url: blob.url,
+        blob_url: fileUrl,
         uploaded_by: req.user ? Number(req.user.user_id) : null,
         createDate: new Date(),
       }).returning();
@@ -75,11 +71,12 @@ module.exports = {
         return next(createError(403, 'ไม่มีสิทธิ์เข้าถึงเอกสารการเงิน'));
       }
 
-      const result = await get(doc.blob_url, { access: 'public' });
+      const result = await r2.getStream(doc.blob_url);
       if (!result || !result.stream) return next(createError(404, 'File not found in storage'));
       if (result.contentType) res.setHeader('Content-Type', result.contentType);
       res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(doc.file_name || 'file')}"`);
-      Readable.fromWeb(result.stream).pipe(res);
+      // SDK ของ S3 คืน Node stream อยู่แล้ว ไม่ต้องแปลงผ่าน Readable.fromWeb เหมือน Vercel Blob
+      result.stream.pipe(res);
     } catch (error) {
       console.log(error.message);
       next(error);
@@ -92,7 +89,7 @@ module.exports = {
       if (Number.isNaN(id)) return next(createError(400, 'Invalid document id'));
       const [doc] = await db.delete(Documents).where(eq(Documents._id, id)).returning();
       if (!doc) return next(createError(404, 'Document not found'));
-      try { await del(doc.blob_url); } catch (e) { console.log('blob del:', e.message); }
+      try { await r2.remove(doc.blob_url); } catch (e) { console.log('storage del:', e.message); }
       res.send({ status: 'success', _id: id });
     } catch (error) {
       console.log(error.message);

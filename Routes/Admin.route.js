@@ -281,6 +281,40 @@ router.post('/delete/cars/image/gallery/:id', CarStoreController.delete_car_stor
  *       422:
  *         description: url ไม่ถูกต้อง
  */
+/**
+ * @swagger
+ * /api/admin/cars/video/presign/{id}:
+ *   post:
+ *     summary: ขอ presigned URL สำหรับอัปโหลดวิดีโอตรงเข้า R2
+ *     description: |
+ *       เบราว์เซอร์เรียกอันนี้ก่อน แล้วเอา `uploadUrl` ที่ได้ไป PUT ไฟล์ตรงเข้าที่เก็บ
+ *       (ไฟล์ไม่ผ่าน API เพราะ serverless จำกัด body ~4.5MB) เสร็จแล้วค่อยเรียก
+ *       `/api/admin/update/cars/video/{id}` เพื่อผูก url เข้ากับรถ
+ *     tags: [Admin - Cars]
+ *     security:
+ *       - AccessToken: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer, example: 1 }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [filename, contentType]
+ *             properties:
+ *               filename:    { type: string, example: walkaround.mp4 }
+ *               contentType: { type: string, example: video/mp4 }
+ *               size:        { type: integer, example: 18452301 }
+ *     responses:
+ *       200: { description: ได้ uploadUrl (PUT ไปที่นี่) และ publicUrl }
+ *       422: { description: ชนิดไฟล์ไม่รองรับ หรือไฟล์ใหญ่เกิน 200MB }
+ */
+router.post('/cars/video/presign/:id', requirePermission('cars.edit'), CarVideoController.presign_car_video);
+
 router.post('/update/cars/video/:id', requirePermission('cars.edit'), CarVideoController.attach_car_video);
 
 /**
@@ -1139,6 +1173,47 @@ router.get('/alerts', requirePermission('alerts.view'), CustomerController.get_a
  *       200: { description: สรุปตัวเลข }
  */
 router.get('/reports/summary', requirePermission('reports.view'), ReportController.get_summary);
+
+/**
+ * @swagger
+ * /api/admin/reports/stock:
+ *   get:
+ *     summary: สต๊อกรายเดือน (ยกมา + ซื้อเข้า - ขายออก = คงเหลือ)
+ *     tags: [Admin - Cars]
+ *     security: [{ AccessToken: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: month
+ *         required: true
+ *         schema: { type: string, example: '2026-07' }
+ *     responses:
+ *       200: { description: สรุปสต๊อก + รายการรถแต่ละกลุ่ม + จุดที่ข้อมูลขาด }
+ */
+router.get('/reports/stock', requirePermission('reports.view'), ReportController.get_stock_month);
+
+/**
+ * @swagger
+ * /api/admin/reports/stock:
+ *   post:
+ *     summary: คีตัวเลขสต๊อกเอง (ทับค่าที่ระบบคำนวณ)
+ *     tags: [Admin - Cars]
+ *     security: [{ AccessToken: [] }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [month]
+ *             properties:
+ *               month: { type: string, example: '2026-07' }
+ *               opening_override: { type: integer, example: 30 }
+ *               in_override: { type: integer, example: 11 }
+ *               out_override: { type: integer, example: 9 }
+ *               note: { type: string }
+ *     responses:
+ *       200: { description: บันทึกสำเร็จ }
+ */
+router.post('/reports/stock', requirePermission('reports.view'), ReportController.save_stock_month);
 
 // ──────────────────────────────────────────────
 // Sales (บันทึกการขาย) + Expenses (ค่าใช้จ่ายต่อคัน) — สิทธิ์การเงิน cars.cost

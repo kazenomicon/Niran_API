@@ -1,4 +1,4 @@
-const { put, del } = require('@vercel/blob');
+const r2 = require('../lib/r2');
 const createError = require('http-errors');
 const crypto = require('crypto');
 const sharp = require('sharp');
@@ -72,11 +72,8 @@ module.exports = {
         const ext = req.file.mimetype.split("/")[1];
         const randomName = crypto.randomBytes(16).toString('hex');
         const buffer = await sharp(req.file.buffer).resize({ height: 1080, width: 1980, fit: "contain" }).toBuffer();
-        const blob = await put(`Category/Default/${randomName}.${ext}`, buffer, {
-          access: 'public',
-          contentType: req.file.mimetype,
-        });
-        imageUrl = blob.url;
+        const url = await r2.put(`Category/Default/${randomName}.${ext}`, buffer, req.file.mimetype);
+        imageUrl = url;
       }
 
       // รับสถานะจาก body ได้ (หน้า "รับรถเข้า" ส่ง INTAKE มา) ค่าเริ่มต้นคือพร้อมขาย
@@ -181,14 +178,11 @@ module.exports = {
 
         // ลบรูปเดิม (cars_image_default ที่ frontend ส่งมาเป็น full URL)
         if (body.cars_image_default) {
-          await del(body.cars_image_default);
+          await r2.remove(body.cars_image_default);
         }
 
-        const blob = await put(`Category/Default/${randomName}.${ext}`, buffer, {
-          access: 'public',
-          contentType: req.file.mimetype,
-        });
-        updates.cars_image_default = blob.url;
+        const url = await r2.put(`Category/Default/${randomName}.${ext}`, buffer, req.file.mimetype);
+        updates.cars_image_default = url;
       }
 
       const [result] = await db.update(carStore).set(updates).where(eq(carStore._id, id)).returning();
@@ -213,11 +207,8 @@ module.exports = {
         const randomName = crypto.randomBytes(16).toString('hex');
         const buffer = await sharp(file.buffer).resize({ height: 1080, width: 1980, fit: "contain" }).toBuffer();
 
-        const blob = await put(`Category/${id}/${randomName}.${ext}`, buffer, {
-          access: 'public',
-          contentType: file.mimetype,
-        });
-        cars_image.push(blob.url);
+        const url = await r2.put(`Category/${id}/${randomName}.${ext}`, buffer, file.mimetype);
+        cars_image.push(url);
       }
 
       const [result] = await db.update(carStore)
@@ -240,7 +231,7 @@ module.exports = {
 
       // cars_image_delete เป็น array ของ full Blob URL
       if (body.cars_image_delete && body.cars_image_delete.length > 0) {
-        await del(body.cars_image_delete);
+        await r2.remove(body.cars_image_delete);
       }
 
       const updates = { updateDate: new Date() };
@@ -278,7 +269,7 @@ module.exports = {
       if (docs.length > 0) await db.delete(schema.documents).where(eq(schema.documents.car_id, id));
 
       if (urlsToDelete.length > 0) {
-        await del(urlsToDelete);
+        await r2.remove(urlsToDelete);
       }
 
       res.send(serializeCar(result, req));

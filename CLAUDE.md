@@ -21,7 +21,7 @@ Express.js REST API following MVC pattern, backed by Neon (serverless Postgres) 
 
 ```
 Client → Routes → Middleware (JWT auth) → Controllers → Drizzle ORM → Neon Postgres
-                                        → Vercel Blob (images via Multer + Sharp)
+                                        → Cloudflare R2 (images via Multer + Sharp)
 ```
 
 **Three route groups mounted in [index.js](index.js):**
@@ -50,41 +50,42 @@ The first admin must be created with `npm run seed` (the `/api/admin/register` r
 | Table | Schema | Notes |
 |-------|--------|-------|
 | `users` | [database/schema.js](database/schema.js) | `position`: `"ADMIN"` or `""` |
-| `car_store` | [database/schema.js](database/schema.js) | `brand_name`/`model_name` denormalized strings; `cars_image[]` (jsonb) holds Blob URLs |
+| `car_store` | [database/schema.js](database/schema.js) | `brand_name`/`model_name` denormalized strings; `cars_image[]` (jsonb) holds storage URLs |
 | `master_brand` | [database/schema.js](database/schema.js) | Brand name + logo image |
 | `master_model` | [database/schema.js](database/schema.js) | `model_submodel[]` (jsonb) |
 | `car_data_detail` | [database/schema.js](database/schema.js) | Spec sheet |
 
 ## Image Upload Flow
 
-Admin routes that handle images use this pipeline:
+Storage is **Cloudflare R2** (S3-compatible) behind [lib/r2.js](lib/r2.js). Admin routes that handle images use this pipeline:
 1. **Multer** (`storage: memoryStorage()`) buffers the file in memory
 2. **Sharp** resizes to 1980×1080 JPEG
-3. **Vercel Blob** (`put()`) uploads with `access: 'public'`
-4. The returned `blob.url` (full URL) is stored directly in Postgres
+3. **`r2.put(key, buffer, contentType)`** uploads and returns the public URL
+4. That full URL is stored directly in Postgres
 
-Path format inside Blob store: `Category/Default/{random}.{ext}` for default image, `Category/{carId}/{random}.{ext}` for gallery, `Category/Brand/{random}` for brand logo.
+`r2.remove(urls)` accepts both R2 and legacy Vercel Blob URLs, so deleting a record still cleans up files that predate the migration. Run [scripts/migrate-blob-to-r2.js](scripts/migrate-blob-to-r2.js) to move old files across (dry-run by default; `--apply` to commit; `--rollback <backup.json>` to undo the DB changes).
 
-**Important:** `cars_image_default`, `cars_image[]`, and `brand_image` fields store **full Vercel Blob URLs** — frontend uses these values directly as image `src` without constructing URLs.
+Path format inside the bucket: `Category/Default/{random}.{ext}` for default image, `Category/{carId}/{random}.{ext}` for gallery, `Category/Brand/{random}` for brand logo.
+
+**Important:** `cars_image_default`, `cars_image[]`, and `brand_image` fields store **full public URLs** — the frontend uses these values directly as image `src` without constructing URLs.
 
 The upload logic lives in [Controllers/CarStore.Controller.js](Controllers/CarStore.Controller.js) and [Controllers/MasterData.Controller.js](Controllers/MasterData.Controller.js).
 
 ## Video Upload Flow (different from images)
 
-Vercel Functions cap request bodies at ~4.5MB, so videos cannot go through the multer→`put()` path used for images. Videos use Vercel Blob **client upload**:
+Vercel Functions cap request bodies at ~4.5MB, so videos cannot go through the multer→`r2.put()` path used for images. Videos are uploaded **straight from the browser** with a presigned URL:
 
-1. Browser calls `upload()` from `@vercel/blob/client` (Dashboard `FormEditVideo.js`)
-2. It POSTs to `/api/upload/car-video/token`, which mints a short-lived client token ([Controllers/CarVideo.Controller.js](Controllers/CarVideo.Controller.js))
-3. The file streams **browser → Blob directly**, never passing through this API
-4. The browser then POSTs the resulting URL to `/api/admin/update/cars/video/:id`, persisting it in `car_store.cars_video` — a jsonb array of `{url, name, size, uploadedAt}`
+1. Dashboard `FormEditVideo.js` POSTs to `/api/admin/cars/video/presign/:id`, which returns a **presigned PUT URL** ([Controllers/CarVideo.Controller.js](Controllers/CarVideo.Controller.js))
+2. The browser `PUT`s the file **straight to R2**, never passing through this API (XHR is used so the progress bar works)
+3. The browser then POSTs the resulting URL to `/api/admin/update/cars/video/:id`, persisting it in `car_store.cars_video` — a jsonb array of `{url, name, size, uploadedAt}`
 
-`/api/upload` is mounted **outside** the `auth` middleware in [index.js](index.js) because the Blob client SDK cannot send custom headers. The access token travels inside `clientPayload`; the route verifies it via `resolveUserFromToken()` ([middleware/auth.js](middleware/auth.js)) and requires `cars.edit`.
+All three routes sit behind the normal `auth` middleware and require `cars.edit`. `attach_car_video` re-checks the object with `HeadObject` rather than trusting the size the browser reported, and rejects any URL that is not under that car's own `Category/{id}/video/` prefix.
 
-Blob's `onUploadCompleted` callback is deliberately unused — it only fires against a public URL, so it never runs on localhost. The explicit attach call in step 4 replaces it.
+The bucket needs a **CORS policy allowing `PUT`** from the dashboard origin, or step 2 fails in the browser.
 
-Limits (200MB/file; `video/mp4`, `video/quicktime`, `video/webm`) are enforced server-side in `onBeforeGenerateToken` and mirrored in the Dashboard only for a friendlier error.
+Limits (200MB/file; `video/mp4`, `video/quicktime`, `video/webm`) are enforced server-side when presigning and again on attach; the Dashboard mirrors them only for a friendlier error.
 
-Blob path format: `Category/{carId}/video/{name}-{random}.{ext}`. `attach_car_video` rejects any URL not under that car's own video path.
+Bucket path format: `Category/{carId}/video/{random}.{ext}`.
 
 ## Vercel Deployment
 
@@ -102,5 +103,8 @@ Configured for Vercel serverless via [vercel.json](vercel.json). Key patterns:
 | `DATABASE_URL` | Neon Postgres connection string (pooled) |
 | `TOKEN_KEY` | JWT signing secret |
 | `REFRESH_TOKEN_KEY` | Refresh token signing secret |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob token (auto-injected by Vercel after creating Blob store) |
+| `R2_ACCOUNT_ID` / `R2_BUCKET` | Cloudflare R2 bucket identity |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 API token (Object Read & Write) |
+| `R2_PUBLIC_BASE_URL` | Public base URL for serving files (r2.dev or custom domain) |
+| `BLOB_READ_WRITE_TOKEN` | Legacy Vercel Blob — only for migrating/cleaning up old files |
 | `SEED_ADMIN_USER` / `SEED_ADMIN_PASS` | Optional — credentials for `npm run seed` |

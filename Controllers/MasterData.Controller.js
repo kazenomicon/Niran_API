@@ -1,4 +1,4 @@
-const { put, del } = require('@vercel/blob');
+const r2 = require('../lib/r2');
 const createError = require('http-errors');
 const crypto = require('crypto');
 const sharp = require('sharp');
@@ -128,7 +128,7 @@ module.exports = {
         if (!result) throw createError(404, 'Product does not exist.');
         // ลบรูปรุ่น (ถ้ามี) จาก Blob ตามไปด้วย
         if (Array.isArray(result.model_image) && result.model_image.length > 0) {
-          try { await del(result.model_image); } catch (e) { console.log('model_image del:', e.message); }
+          try { await r2.remove(result.model_image); } catch (e) { console.log('model_image del:', e.message); }
         }
         res.send(result);
       } catch (error) {
@@ -188,11 +188,8 @@ module.exports = {
         if (req.file) {
           const randomName = crypto.randomBytes(16).toString('hex');
           const buffer = await sharp(req.file.buffer).toBuffer();
-          const blob = await put(`Category/Brand/${randomName}`, buffer, {
-            access: 'public',
-            contentType: req.file.mimetype,
-          });
-          values.brand_image = blob.url;
+          const url = await r2.put(`Category/Brand/${randomName}`, buffer, req.file.mimetype);
+          values.brand_image = url;
         }
         const [result] = await db.insert(Brand).values(values).returning();
         res.send(result);
@@ -217,15 +214,12 @@ module.exports = {
         if (req.file) {
           // ลบรูปเดิม (brand_image ที่ frontend ส่งมาเป็น full URL)
           if (body.brand_image) {
-            await del(body.brand_image);
+            await r2.remove(body.brand_image);
           }
           const randomName = crypto.randomBytes(16).toString('hex');
           const buffer = await sharp(req.file.buffer).toBuffer();
-          const blob = await put(`Category/Brand/${randomName}`, buffer, {
-            access: 'public',
-            contentType: req.file.mimetype,
-          });
-          updates.brand_image = blob.url;
+          const url = await r2.put(`Category/Brand/${randomName}`, buffer, req.file.mimetype);
+          updates.brand_image = url;
         }
 
         const [result] = await db.update(Brand).set(updates).where(eq(Brand._id, id)).returning();
@@ -244,7 +238,7 @@ module.exports = {
         const [result] = await db.delete(Brand).where(eq(Brand._id, id)).returning();
         if (!result) throw createError(404, 'Product does not exist.');
         if (result.brand_image) {
-          await del(result.brand_image);
+          await r2.remove(result.brand_image);
         }
         res.send(result);
       } catch (error) {

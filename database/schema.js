@@ -180,4 +180,17 @@ const expenses = pgTable('expenses', {
   createDate: timestamp('create_date').notNull(),
 });
 
-module.exports = { users, roles, masterBrand, masterModel, carDataDetail, carStore, contactInfo, documents, customers, sales, expenses };
+// สรุปสต๊อกรายเดือน — ให้คีทับเองได้เมื่อข้อมูลอัตโนมัติไม่ครบ
+// (รถเก่าหลายคันไม่มีวันที่รถเข้า/วันที่ขาย ระบบจึงคำนวณย้อนหลังได้ไม่ครบ)
+const stockMonths = pgTable('stock_months', {
+  _id: serial('id').primaryKey(),
+  month: text('month').notNull(),              // 'YYYY-MM'
+  opening_override: integer('opening_override'), // ยอดยกมาที่คีเอง (ว่าง = ใช้ค่าที่ระบบคำนวณ)
+  in_override: integer('in_override'),           // ซื้อเข้าที่คีเอง
+  out_override: integer('out_override'),         // ตัดสต๊อก/ขายออกที่คีเอง
+  note: text('note'),
+  updated_by: integer('updated_by'),
+  updateDate: timestamp('update_date').notNull(),
+});
+
+module.exports = { users, roles, masterBrand, masterModel, carDataDetail, carStore, contactInfo, documents, customers, sales, expenses, stockMonths };

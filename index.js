@@ -22,10 +22,6 @@ const UserRoute = require('./Routes/User.route');
 app.use('/api/user', UserRoute);
 const AdminRoute = require('./Routes/Admin.route');
 app.use('/api/admin', auth, AdminRoute);
-// ไม่ผ่าน middleware auth — Vercel Blob client SDK ส่ง header ไม่ได้
-// ตัว route ตรวจ access token ที่แนบมาใน clientPayload เอง
-const UploadRoute = require('./Routes/Upload.route');
-app.use('/api/upload', UploadRoute);
 
 app.get("/", (req, res) => {
   res.status(200).send({ status: "success" });
